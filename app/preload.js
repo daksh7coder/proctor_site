@@ -1,4 +1,5 @@
 
+
 const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("proctor", {
@@ -6,4 +7,7 @@ contextBridge.exposeInMainWorld("proctor", {
   selectFolder: () => ipcRenderer.invoke("select-folder"),
   enterFullscreen: () => ipcRenderer.invoke("enter-fullscreen"),
   exitFullscreen: () => ipcRenderer.invoke("exit-fullscreen"),
+
+  saveScreenshot: (image) =>
+    ipcRenderer.invoke("save-screenshot", image),
 });

@@ -9,11 +9,13 @@ import {
 } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mkdir, writeFile } from "node:fs/promises";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow;
+let selectedFolderPath = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -51,12 +53,18 @@ ipcMain.handle("show-rules", async () => {
   });
 });
 
-// Folder selection dialog
+// Select screenshot destination
 ipcMain.handle("select-folder", async () => {
-  return dialog.showOpenDialog(mainWindow, {
-    title: "Select a folder",
-    properties: ["openDirectory"],
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: "Choose screenshot folder",
+    properties: ["openDirectory", "createDirectory"],
   });
+
+  if (!result.canceled && result.filePaths.length > 0) {
+    selectedFolderPath = result.filePaths[0];
+  }
+
+  return result;
 });
 
 // Fullscreen exam controls
@@ -70,6 +78,45 @@ ipcMain.handle("exit-fullscreen", () => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setFullScreen(false);
   }
+});
+
+// Save a camera or screen screenshot
+ipcMain.handle("save-screenshot", async (_event, image) => {
+  if (
+    !image ||
+    !["camera", "screen"].includes(image.type) ||
+    typeof image.dataUrl !== "string" ||
+    !image.dataUrl.startsWith("data:image/png;base64,")
+  ) {
+    throw new Error("Invalid screenshot data.");
+  }
+
+  const baseFolder =
+    selectedFolderPath ||
+    path.join(app.getPath("pictures"), "ProctorLite");
+
+  const folderName =
+    image.type === "camera"
+      ? "user-camera-snap"
+      : "user-screen-snap";
+
+  const folderPath = path.join(baseFolder, folderName);
+
+  await mkdir(folderPath, { recursive: true });
+
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-");
+
+  const filename = `${image.type}-${timestamp}.png`;
+  const imageBase64 = image.dataUrl.split(",")[1];
+
+  await writeFile(
+    path.join(folderPath, filename),
+    Buffer.from(imageBase64, "base64")
+  );
+
+  return { success: true, filename };
 });
 
 // Configure screen sharing

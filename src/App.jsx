@@ -1,5 +1,7 @@
 
-import { useEffect, useRef, useState } from "react";
+
+
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 
 function App() {
@@ -11,10 +13,11 @@ function App() {
   const [error, setError] = useState("");
 
   const videoRef = useRef(null);
+  const screenVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
 
-  // Exam countdown timer
+  // Exam timer
   useEffect(() => {
     if (!examStarted) return;
 
@@ -34,7 +37,7 @@ function App() {
     return () => clearInterval(timer);
   }, [examStarted]);
 
-  // Stop camera and screen streams when the component unmounts
+  // Stop device streams when the component unmounts
   useEffect(() => {
     return () => {
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -42,14 +45,14 @@ function App() {
     };
   }, []);
 
-  // Connect the camera stream to the video preview
+  // Attach camera stream after its preview element is rendered
   useEffect(() => {
     if (videoRef.current && cameraStreamRef.current) {
       videoRef.current.srcObject = cameraStreamRef.current;
     }
   }, [cameraOn]);
 
-  // Format seconds as HH:MM:SS
+  // Format timer as HH:MM:SS
   const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -60,7 +63,7 @@ function App() {
       .join(":");
   };
 
-  // Turn the camera on or off
+  // Turn camera on or off
   async function toggleCamera() {
     setError("");
 
@@ -92,8 +95,8 @@ function App() {
       setCameraOn(true);
       setMessage("Camera connected successfully");
     } catch (error) {
-      console.error("Camera error:", error);
-      setError(error.message || "Camera access failed. Check your camera permissions.");
+      console.error("Camera access error:", error);
+      setError("Camera access failed. Check your camera permissions.");
     }
   }
 
@@ -104,6 +107,11 @@ function App() {
     if (screenOn) {
       screenStreamRef.current?.getTracks().forEach((track) => track.stop());
       screenStreamRef.current = null;
+
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = null;
+      }
+
       setScreenOn(false);
       setMessage("Screen sharing stopped");
       return;
@@ -117,29 +125,35 @@ function App() {
 
       screenStreamRef.current = stream;
 
-      const videoTrack = stream.getVideoTracks()[0];
-
-      if (videoTrack) {
-        videoTrack.addEventListener(
-          "ended",
-          () => {
-            screenStreamRef.current = null;
-            setScreenOn(false);
-            setMessage("Screen sharing stopped");
-          },
-          { once: true }
-        );
+      if (screenVideoRef.current) {
+        screenVideoRef.current.srcObject = stream;
+        await screenVideoRef.current.play();
       }
+
+      stream.getVideoTracks()[0]?.addEventListener(
+        "ended",
+        () => {
+          screenStreamRef.current = null;
+
+          if (screenVideoRef.current) {
+            screenVideoRef.current.srcObject = null;
+          }
+
+          setScreenOn(false);
+          setMessage("Screen sharing stopped");
+        },
+        { once: true }
+      );
 
       setScreenOn(true);
       setMessage("Screen sharing started");
     } catch (error) {
       console.error("Screen sharing error:", error);
-      setError(error.message || "Screen sharing failed.");
+      setError("Screen sharing was cancelled or permission was denied.");
     }
   }
 
-  // Display the exam rules
+  // Show exam rules
   async function showRules() {
     setError("");
 
@@ -148,8 +162,7 @@ function App() {
         await window.proctor.showRules();
       } else {
         window.alert(
-          "Exam Rules\n\n" +
-            "1. Keep your camera enabled when required.\n" +
+          "Exam Rules\n\n1. Keep your camera enabled when required.\n" +
             "2. Share the screen required for your exam.\n" +
             "3. Follow your exam administrator's instructions.\n" +
             "4. Ask for help if a technical problem occurs."
@@ -157,11 +170,11 @@ function App() {
       }
     } catch (error) {
       console.error("Exam rules error:", error);
-      setError(error.message || "Could not display exam rules.");
+      setError("Could not open the exam rules.");
     }
   }
 
-  // Open the native folder-selection dialog
+  // Select the folder where screenshots will be saved
   async function selectFolder() {
     setError("");
 
@@ -172,15 +185,13 @@ function App() {
 
       const result = await window.proctor.selectFolder();
 
-      if (!result || result.canceled) {
+      if (result.canceled) {
         setMessage("Folder selection cancelled");
         return;
       }
 
       if (result.filePaths?.length > 0) {
-        setMessage("Folder selected: " + result.filePaths[0]);
-      } else {
-        setMessage("No folder was selected");
+        setMessage("Screenshot folder selected");
       }
     } catch (error) {
       console.error("Folder selection error:", error);
@@ -188,37 +199,104 @@ function App() {
     }
   }
 
-  // Start the exam only after both device checks pass
-  
-  // Start the exam in fullscreen mode
-  
-async function startExam() {
-  if (!cameraOn || !screenOn) {
-    setError("Please enable your camera and screen sharing first.");
-    return;
-  }
+  // Capture and save a single screenshot
+  const captureScreenshot = useCallback(
+    async (type) => {
+      const video =
+        type === "camera"
+          ? videoRef.current
+          : screenVideoRef.current;
 
-  try {
-    console.log("Proctor API:", window.proctor);
+      if (
+        !examStarted ||
+        !video ||
+        video.readyState < 2 ||
+        video.videoWidth === 0 ||
+        video.videoHeight === 0
+      ) {
+        return;
+      }
 
-    if (!window.proctor?.enterFullscreen) {
-      throw new Error("enterFullscreen API is missing");
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        const context = canvas.getContext("2d");
+
+        if (!context) {
+          throw new Error("Could not create screenshot canvas.");
+        }
+
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const dataUrl = canvas.toDataURL("image/png");
+
+        if (!window.proctor?.saveScreenshot) {
+          throw new Error("Screenshot-saving API is unavailable.");
+        }
+
+        const result = await window.proctor.saveScreenshot({
+          type,
+          dataUrl,
+        });
+
+        if (!result?.success) {
+          throw new Error("Screenshot was not saved.");
+        }
+
+        console.log(`${type} screenshot saved:`, result.filename);
+      } catch (error) {
+        console.error(`${type} screenshot failed:`, error);
+        setError(`Could not save ${type} screenshot.`);
+      }
+    },
+    [examStarted]
+  );
+
+  // Automatically capture both streams during the exam
+  useEffect(() => {
+    if (!examStarted) return;
+
+    const captureBoth = () => {
+      void captureScreenshot("camera");
+      void captureScreenshot("screen");
+    };
+
+    const initialCapture = setTimeout(captureBoth, 1500);
+    const interval = setInterval(captureBoth, 30000);
+
+    return () => {
+      clearTimeout(initialCapture);
+      clearInterval(interval);
+    };
+  }, [examStarted, captureScreenshot]);
+
+  // Start exam and enter fullscreen
+  async function startExam() {
+    if (!cameraOn || !screenOn) {
+      setError("Please enable your camera and screen sharing first.");
+      return;
     }
 
-    await window.proctor.enterFullscreen();
-    console.log("Fullscreen request sent");
+    try {
+      if (!window.proctor?.enterFullscreen) {
+        throw new Error("Fullscreen API is unavailable.");
+      }
 
-    setError("");
-    setTimeLeft(60 * 60);
-    setExamStarted(true);
-    setMessage("Exam in progress");
-  } catch (error) {
-    console.error("Fullscreen error:", error);
-    setError("Could not enter fullscreen mode. Check the console.");
+      await window.proctor.enterFullscreen();
+
+      setError("");
+      setTimeLeft(60 * 60);
+      setExamStarted(true);
+      setMessage("Exam in progress");
+    } catch (error) {
+      console.error("Fullscreen error:", error);
+      setError("Could not enter fullscreen mode.");
+    }
   }
-}
 
-  // End the exam and stop device streams
+  // End exam and stop device streams
   async function endExam() {
     setExamStarted(false);
     setMessage("Exam ended");
@@ -231,6 +309,10 @@ async function startExam() {
 
     if (videoRef.current) {
       videoRef.current.srcObject = null;
+    }
+
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = null;
     }
 
     setCameraOn(false);
@@ -327,7 +409,6 @@ async function startExam() {
                 <p className="eyebrow">PRE-EXAM CHECKLIST</p>
                 <h3>Device verification</h3>
               </div>
-
               <span className="check-count">
                 {Number(cameraOn) + Number(screenOn)} of 2
               </span>
@@ -335,7 +416,6 @@ async function startExam() {
 
             <div className="device-row">
               <div className="device-icon">◉</div>
-
               <div className="device-info">
                 <strong>Camera</strong>
                 <p>
@@ -344,11 +424,9 @@ async function startExam() {
                     : "Check your camera before starting"}
                 </p>
               </div>
-
               <span className={`pill ${cameraOn ? "success" : ""}`}>
                 {cameraOn ? "Connected" : "Not checked"}
               </span>
-
               <button className="secondary-button" onClick={toggleCamera}>
                 {cameraOn ? "Turn off" : "Test camera"}
               </button>
@@ -363,7 +441,6 @@ async function startExam() {
 
             <div className="device-row">
               <div className="device-icon">▣</div>
-
               <div className="device-info">
                 <strong>Screen sharing</strong>
                 <p>
@@ -372,15 +449,22 @@ async function startExam() {
                     : "Choose the screen or window to share"}
                 </p>
               </div>
-
               <span className={`pill ${screenOn ? "success" : ""}`}>
                 {screenOn ? "Sharing" : "Not checked"}
               </span>
-
               <button className="secondary-button" onClick={toggleScreen}>
                 {screenOn ? "Stop sharing" : "Share screen"}
               </button>
             </div>
+
+            {/* Hidden video used to capture frames from the shared screen */}
+            <video
+              ref={screenVideoRef}
+              autoPlay
+              muted
+              playsInline
+              style={{ display: "none" }}
+            />
 
             {error && <div className="error-message">{error}</div>}
 
@@ -399,10 +483,7 @@ async function startExam() {
                   Start exam <span>→</span>
                 </button>
               ) : (
-                <button
-                  className="primary-button end-button"
-                  onClick={endExam}
-                >
+                <button className="primary-button end-button" onClick={endExam}>
                   End exam
                 </button>
               )}
@@ -440,16 +521,14 @@ async function startExam() {
 
             <div className="panel help-panel">
               <div className="help-symbol">?</div>
-
               <div>
                 <h3>Need technical help?</h3>
                 <p>
                   If a device check fails, review your system permissions and
                   try again.
                 </p>
-
                 <button className="text-button" onClick={selectFolder}>
-                  Test folder dialog →
+                  Choose screenshot folder →
                 </button>
               </div>
             </div>
@@ -466,3 +545,4 @@ async function startExam() {
 }
 
 export default App;
+
