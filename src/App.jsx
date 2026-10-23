@@ -14,6 +14,7 @@ function App() {
   const cameraStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
 
+  // Exam countdown timer
   useEffect(() => {
     if (!examStarted) return;
 
@@ -33,6 +34,7 @@ function App() {
     return () => clearInterval(timer);
   }, [examStarted]);
 
+  // Stop camera and screen streams when the component unmounts
   useEffect(() => {
     return () => {
       cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -40,12 +42,14 @@ function App() {
     };
   }, []);
 
+  // Connect the camera stream to the video preview
   useEffect(() => {
     if (videoRef.current && cameraStreamRef.current) {
       videoRef.current.srcObject = cameraStreamRef.current;
     }
   }, [cameraOn]);
 
+  // Format seconds as HH:MM:SS
   const formatTime = (seconds) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
@@ -56,6 +60,7 @@ function App() {
       .join(":");
   };
 
+  // Turn the camera on or off
   async function toggleCamera() {
     setError("");
 
@@ -86,11 +91,13 @@ function App() {
 
       setCameraOn(true);
       setMessage("Camera connected successfully");
-    } catch {
-      setError("Camera access failed. Check your camera permissions.");
+    } catch (error) {
+      console.error("Camera error:", error);
+      setError(error.message || "Camera access failed. Check your camera permissions.");
     }
   }
 
+  // Start or stop screen sharing
   async function toggleScreen() {
     setError("");
 
@@ -110,66 +117,109 @@ function App() {
 
       screenStreamRef.current = stream;
 
-      stream.getVideoTracks()[0].addEventListener(
-        "ended",
-        () => {
-          screenStreamRef.current = null;
-          setScreenOn(false);
-          setMessage("Screen sharing stopped");
-        },
-        { once: true }
-      );
+      const videoTrack = stream.getVideoTracks()[0];
+
+      if (videoTrack) {
+        videoTrack.addEventListener(
+          "ended",
+          () => {
+            screenStreamRef.current = null;
+            setScreenOn(false);
+            setMessage("Screen sharing stopped");
+          },
+          { once: true }
+        );
+      }
 
       setScreenOn(true);
       setMessage("Screen sharing started");
-    } catch {
-      setError("Screen sharing was cancelled or permission was denied.");
+    } catch (error) {
+      console.error("Screen sharing error:", error);
+      setError(error.message || "Screen sharing failed.");
     }
   }
 
+  // Display the exam rules
   async function showRules() {
     setError("");
 
-    if (window.proctor?.showRules) {
-      await window.proctor.showRules();
-    } else {
-      window.alert(
-        "Exam Rules\n\n1. Keep your camera enabled when required.\n" +
-          "2. Share the screen required for your exam.\n" +
-          "3. Follow your exam administrator's instructions.\n" +
-          "4. Ask for help if a technical problem occurs."
-      );
+    try {
+      if (window.proctor?.showRules) {
+        await window.proctor.showRules();
+      } else {
+        window.alert(
+          "Exam Rules\n\n" +
+            "1. Keep your camera enabled when required.\n" +
+            "2. Share the screen required for your exam.\n" +
+            "3. Follow your exam administrator's instructions.\n" +
+            "4. Ask for help if a technical problem occurs."
+        );
+      }
+    } catch (error) {
+      console.error("Exam rules error:", error);
+      setError(error.message || "Could not display exam rules.");
     }
   }
 
+  // Open the native folder-selection dialog
   async function selectFolder() {
     setError("");
 
-    if (!window.proctor?.selectFolder) {
-      setMessage("Folder selection is available in the desktop app");
-      return;
-    }
+    try {
+      if (!window.proctor?.selectFolder) {
+        throw new Error("Electron folder-selection API is unavailable.");
+      }
 
-    const result = await window.proctor.selectFolder();
+      const result = await window.proctor.selectFolder();
 
-    if (!result.canceled && result.filePaths.length > 0) {
-      setMessage("Folder selected successfully");
+      if (!result || result.canceled) {
+        setMessage("Folder selection cancelled");
+        return;
+      }
+
+      if (result.filePaths?.length > 0) {
+        setMessage("Folder selected: " + result.filePaths[0]);
+      } else {
+        setMessage("No folder was selected");
+      }
+    } catch (error) {
+      console.error("Folder selection error:", error);
+      setError(error.message || "Folder selection failed.");
     }
   }
 
-  function startExam() {
-    if (!cameraOn || !screenOn) {
-      setError("Please enable your camera and screen sharing first.");
-      return;
+  // Start the exam only after both device checks pass
+  
+  // Start the exam in fullscreen mode
+  
+async function startExam() {
+  if (!cameraOn || !screenOn) {
+    setError("Please enable your camera and screen sharing first.");
+    return;
+  }
+
+  try {
+    console.log("Proctor API:", window.proctor);
+
+    if (!window.proctor?.enterFullscreen) {
+      throw new Error("enterFullscreen API is missing");
     }
+
+    await window.proctor.enterFullscreen();
+    console.log("Fullscreen request sent");
 
     setError("");
     setTimeLeft(60 * 60);
     setExamStarted(true);
     setMessage("Exam in progress");
+  } catch (error) {
+    console.error("Fullscreen error:", error);
+    setError("Could not enter fullscreen mode. Check the console.");
   }
+}
 
-  function endExam() {
+  // End the exam and stop device streams
+  async function endExam() {
     setExamStarted(false);
     setMessage("Exam ended");
 
@@ -185,6 +235,13 @@ function App() {
 
     setCameraOn(false);
     setScreenOn(false);
+    setError("");
+
+    try {
+      await window.proctor?.exitFullscreen?.();
+    } catch (error) {
+      console.error("Exit fullscreen error:", error);
+    }
   }
 
   return (
@@ -270,6 +327,7 @@ function App() {
                 <p className="eyebrow">PRE-EXAM CHECKLIST</p>
                 <h3>Device verification</h3>
               </div>
+
               <span className="check-count">
                 {Number(cameraOn) + Number(screenOn)} of 2
               </span>
@@ -277,6 +335,7 @@ function App() {
 
             <div className="device-row">
               <div className="device-icon">◉</div>
+
               <div className="device-info">
                 <strong>Camera</strong>
                 <p>
@@ -285,9 +344,11 @@ function App() {
                     : "Check your camera before starting"}
                 </p>
               </div>
+
               <span className={`pill ${cameraOn ? "success" : ""}`}>
                 {cameraOn ? "Connected" : "Not checked"}
               </span>
+
               <button className="secondary-button" onClick={toggleCamera}>
                 {cameraOn ? "Turn off" : "Test camera"}
               </button>
@@ -302,6 +363,7 @@ function App() {
 
             <div className="device-row">
               <div className="device-icon">▣</div>
+
               <div className="device-info">
                 <strong>Screen sharing</strong>
                 <p>
@@ -310,9 +372,11 @@ function App() {
                     : "Choose the screen or window to share"}
                 </p>
               </div>
+
               <span className={`pill ${screenOn ? "success" : ""}`}>
                 {screenOn ? "Sharing" : "Not checked"}
               </span>
+
               <button className="secondary-button" onClick={toggleScreen}>
                 {screenOn ? "Stop sharing" : "Share screen"}
               </button>
@@ -335,7 +399,10 @@ function App() {
                   Start exam <span>→</span>
                 </button>
               ) : (
-                <button className="primary-button end-button" onClick={endExam}>
+                <button
+                  className="primary-button end-button"
+                  onClick={endExam}
+                >
                   End exam
                 </button>
               )}
@@ -373,12 +440,14 @@ function App() {
 
             <div className="panel help-panel">
               <div className="help-symbol">?</div>
+
               <div>
                 <h3>Need technical help?</h3>
                 <p>
                   If a device check fails, review your system permissions and
                   try again.
                 </p>
+
                 <button className="text-button" onClick={selectFolder}>
                   Test folder dialog →
                 </button>
@@ -397,4 +466,3 @@ function App() {
 }
 
 export default App;
-

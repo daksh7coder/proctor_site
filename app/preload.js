@@ -1,7 +1,9 @@
 
-import { contextBridge, ipcRenderer } from "electron";
+const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("proctor", {
   showRules: () => ipcRenderer.invoke("show-rules"),
   selectFolder: () => ipcRenderer.invoke("select-folder"),
+  enterFullscreen: () => ipcRenderer.invoke("enter-fullscreen"),
+  exitFullscreen: () => ipcRenderer.invoke("exit-fullscreen"),
 });
