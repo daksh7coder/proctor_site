@@ -8,7 +8,7 @@ function App() {
   const [cameraOn, setCameraOn] = useState(false);
   const [screenOn, setScreenOn] = useState(false);
   const [examStarted, setExamStarted] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(60 * 60);
+  const [timeLeft, setTimeLeft] = useState(60*60);
   const [message, setMessage] = useState("Ready to begin your exam");
   const [error, setError] = useState("");
 
@@ -17,25 +17,58 @@ function App() {
   const cameraStreamRef = useRef(null);
   const screenStreamRef = useRef(null);
 
-  // Exam timer
+  // End the exam and clean up all active devices and fullscreen mode.
+  const endExam = useCallback(async (reason = "Exam ended") => {
+    setExamStarted(false);
+    setMessage(reason);
+
+    // Stop the camera stream.
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+
+    // Stop the screen-sharing stream.
+    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+    screenStreamRef.current = null;
+
+    // Clear both video elements.
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = null;
+    }
+
+    // Update the device indicators and clear any previous error.
+    setCameraOn(false);
+    setScreenOn(false);
+    setError("");
+
+    // Leave fullscreen mode.
+    try {
+      await window.proctor?.exitFullscreen?.();
+    } catch (error) {
+      console.error("Exit fullscreen error:", error);
+    }
+  }, []);
+
+  // Exam timer: only update the countdown here.
   useEffect(() => {
     if (!examStarted) return;
 
     const timer = setInterval(() => {
-      setTimeLeft((previous) => {
-        if (previous <= 1) {
-          clearInterval(timer);
-          setExamStarted(false);
-          setMessage("Exam timer completed");
-          return 0;
-        }
-
-        return previous - 1;
-      });
+      setTimeLeft((previous) => (previous <= 1 ? 0 : previous - 1));
     }, 1000);
 
     return () => clearInterval(timer);
   }, [examStarted]);
+
+  // When the timer reaches zero, run the same full cleanup as End Exam.
+  useEffect(() => {
+    if (examStarted && timeLeft === 0) {
+      void endExam("Exam timer completed");
+    }
+  }, [examStarted, timeLeft, endExam]);
 
   // Stop device streams when the component unmounts
   useEffect(() => {
@@ -100,7 +133,7 @@ function App() {
     }
   }
 
-  // Start or stop screen sharing
+  
   async function toggleScreen() {
     setError("");
 
@@ -287,42 +320,12 @@ function App() {
       await window.proctor.enterFullscreen();
 
       setError("");
-      setTimeLeft(60 * 60);
+      setTimeLeft(60*60);
       setExamStarted(true);
       setMessage("Exam in progress");
     } catch (error) {
       console.error("Fullscreen error:", error);
       setError("Could not enter fullscreen mode.");
-    }
-  }
-
-  // End exam and stop device streams
-  async function endExam() {
-    setExamStarted(false);
-    setMessage("Exam ended");
-
-    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
-    screenStreamRef.current?.getTracks().forEach((track) => track.stop());
-
-    cameraStreamRef.current = null;
-    screenStreamRef.current = null;
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-
-    if (screenVideoRef.current) {
-      screenVideoRef.current.srcObject = null;
-    }
-
-    setCameraOn(false);
-    setScreenOn(false);
-    setError("");
-
-    try {
-      await window.proctor?.exitFullscreen?.();
-    } catch (error) {
-      console.error("Exit fullscreen error:", error);
     }
   }
 
@@ -543,6 +546,4 @@ function App() {
     </div>
   );
 }
-
 export default App;
-
